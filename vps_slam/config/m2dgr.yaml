@@ -1,0 +1,29 @@
+topic:
+    lidar_topic: "/velodyne_points"
+    imu_topic: "/handsfree/imu"
+
+noise_model:
+    acc_cov: 0.8
+    gyr_cov: 0.4
+    b_acc_cov: 0.002
+    b_gyr_cov: 0.001
+    ranging_cov: 0.04
+    angle_cov: 0.1
+
+imu:
+    extrinsic_T: [ 0.27255, -0.00053, 0.17954 ] # ulhk # [-0.5, 1.4, 1.5] # utbm
+    extrinsic_R: [ 1, 0, 0,
+                   0, 1, 0,
+                   0, 0, 1] # ulhk 4 utbm 3
+
+voxel:
+    max_layer: 3
+    layer_point_size: 5
+    max_voxel_size: 4
+    flat_threshold: 0.01
+
+mapping:
+    window_size: 3
+    voxelRebuildDeltaFrameNum: 10000   # number of frames to rebuild voxels
+    keyframeAddingAngle: 5          # degree
+    keyframeAddingDistance: 1.0     # meter

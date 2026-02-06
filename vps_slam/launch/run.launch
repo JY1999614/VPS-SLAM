@@ -1,0 +1,20 @@
+<launch>
+    
+    <!--- Sim Time -->
+    <param name="/use_sim_time" value="true" />
+
+    <!-- Rviz -->
+    <arg name="rviz" default="true" />
+    <group if="$(arg rviz)">
+    <node launch-prefix="nice" pkg="rviz" type="rviz" name="rviz" args="-d $(find vps_slam)/rviz_cfg/mapping.rviz" />
+    </group>
+
+    <!-- Parameters -->
+    <rosparam file = "$(find vps_slam)/config/m2dgr.yaml"/>
+
+    <!--- vps_slam -->
+    <node pkg="vps_slam" type="PreProcessing" name="PreProcessing"/>
+    <node pkg="vps_slam" type="SurfelExtraction" name="SurfelExtraction"/>
+    <node pkg="vps_slam" type="SurfelMapping" name="SurfelMapping" output="screen"/>
+
+</launch>
