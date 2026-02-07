@@ -234,22 +234,11 @@ void SurfelMapping::surfelMappingThread()
             
             mtx_buffer.unlock();
 
-            TicToc t_whole;
             slideWindow();
             scan2MapOptimization();
-            TicToc t_mapping;
             saveKeyFramesAndMap();
-            time_mapping = t_mapping.toc();
-            time_whole = t_whole.toc();
             publishOdometryAndPath();
             pubVoxelMap(voxel_map, max_layer, pub_surfel_vis);
-            f_time << std::fixed << std::setprecision(9) << time_whole << " " << time_feature << " " << time_optimization << " " << time_covariance << " " << time_mapping << std::endl;
-            time_whole = 0;
-            time_feature = 0;
-            time_optimization = 0;
-            time_covariance = 0;
-            time_mapping = 0;
-            cout << "--SurfelMapping: whole time: " << t_whole.toc() << endl << endl;
         }
 
         rate.sleep();
@@ -445,7 +434,6 @@ void SurfelMapping::scan2MapOptimization()
         // eigen to double
         for (int i = 0; i < (int)state_window.size(); i++)
         {
-            // cout << "bef state_window[" << i << "]: " << state_window[i].pos_end.transpose() << endl;
             para_t[i][0] = state_window[i].pos_end.x();
             para_t[i][1] = state_window[i].pos_end.y();
             para_t[i][2] = state_window[i].pos_end.z();
@@ -468,24 +456,19 @@ void SurfelMapping::scan2MapOptimization()
         }
 
         // find lidar residual
-        TicToc t_lidar;
         time_feature = 0;
         vector<vector<sfsf>> sfsf_list_window;
         for (int i = 0; i < (int)sf_body_list_window.size(); i++)
         {
-            TicToc t_feature;
             vector<sfsf> sfsf_list;
             buildResidualList(voxel_map, max_voxel_size, state_window[i], sf_body_list_window[i], sfsf_list);
-            time_feature += t_feature.toc();
             for (auto sfsf : sfsf_list)
             {
                 ceres::CostFunction *lidar_factor = LidarSurfelSurfelFactor::Create(sfsf.normal_scan, sfsf.center_scan, sfsf.normal_map, sfsf.center_map, 1);
                 problem.AddResidualBlock(lidar_factor, loss_function, para_q[i], para_t[i]);
             }
-            // cout << "--residual: " << sfsf_list.size() << " sfsf in " << sf_body_list_window[i].size()  << " surfels" << endl;
             sfsf_list_window.push_back(sfsf_list);
         }
-        // cout << "--SurfelMapping: lidar residuals find time: " << t_lidar.toc() << endl;
 
         // add imu factor
         for (int i = 0; i < (int)pre_integration_window.size() - 1; i++)
@@ -495,7 +478,6 @@ void SurfelMapping::scan2MapOptimization()
                                      para_t[i+1], para_q[i+1], para_speed_bias[i+1]);
         }
         
-        TicToc t_optimization;
         ceres::Solver::Options options;
         options.linear_solver_type = ceres::DENSE_SCHUR;
         options.max_num_iterations = 10;
@@ -504,9 +486,6 @@ void SurfelMapping::scan2MapOptimization()
         options.gradient_check_relative_precision = 1e-4;
         ceres::Solver::Summary summary;
         ceres::Solve(options, &problem, &summary);
-        // cout << "--SurfelMapping: ceres solve time: " << t_solver.toc() << endl;
-
-        time_optimization = t_optimization.toc();
 
         // double to eigen
         for (int i = 0; i < (int)state_window.size(); i++)
@@ -529,11 +508,9 @@ void SurfelMapping::scan2MapOptimization()
             state_window[i].bias_g.z() = para_speed_bias[i][8];
             state_window[i].quat_end.normalize();
             state_window[i].cov = Eigen::Matrix<double, 15, 15>::Zero();
-            // cout << "aft state_window[" << i << "]: " << state_window[i].pos_end.transpose() << endl;
         }
 
         // calculate covariance
-        TicToc t_covariance;
         int N = state_window.size();
         Eigen::MatrixXd H_1 = Eigen::MatrixXd::Zero(15 * N, 15 * N);
         Eigen::MatrixXd cov_tmp = Eigen::MatrixXd::Zero(15 * N, 15 * N);
@@ -615,9 +592,7 @@ void SurfelMapping::scan2MapOptimization()
         for (int i = 0; i < (int)state_window.size(); i++)
         {
             state_window[i].cov = window_state_cov.block<15, 15>(i * 15, i * 15);
-            // cout << "state_window[" << i << "] cov:" << endl << state_window[i].cov << endl;
         }
-        time_covariance = t_covariance.toc();
     }
 }
 
@@ -660,21 +635,8 @@ void SurfelMapping::saveKeyFramesAndMap()
     thisPose.z = state_window.front().pos_end.z();
     thisPose.intensity = keyFrameNum;
 
-    // if (cloudKeyPoses->points.empty())
-    // {
-    //     travel_distance[keyFrameNum] = 0;
-    // }
-    // else
-    // {
-    //     float delta_distance = delta_pos.norm();
-    //     float dis_temp = travel_distance.rbegin()->second + delta_distance;
-    //     travel_distance[keyFrameNum] = dis_temp;
-    // }
-
-    TicToc t_update;
     updateVoxelMap(sf_body_list_window.front(), state_window.front(), keyFrameNum, 
                    voxelRebuildDeltaFrameNum, max_layer, layer_voxel_size, voxel_map);
-    // cout << "--SurfelMapping: update time: " << t_update.toc() << endl;
 
     cloudKeyPoses->points.push_back(thisPose);
     statesKeyFrames[keyFrameNum] = state_window.front();
@@ -725,14 +687,13 @@ void SurfelMapping::publishOdometryAndPath()
 void SurfelMapping::pubVoxelMap(const std::unordered_map<VOXEL_LOC, shared_ptr<SurfelRootVoxel>> &voxel_map, 
                                 const int pub_max_voxel_layer, const ros::Publisher &voxel_surfel_pub)
 {
-    // if (voxel_surfel_pub.getNumSubscribers() <= 0) return;
+    if (voxel_surfel_pub.getNumSubscribers() <= 0) return;
     vector<shared_ptr<Surfel>> pub_surfel_list;
     for (auto iter = voxel_map.begin(); iter != voxel_map.end(); ++iter)
     {
         GetVoxelMapSurfel(iter->second, pub_max_voxel_layer, pub_surfel_list);
     }
     pubVoxelSurfel(pub_surfel_list, voxel_surfel_pub);
-    cout << "map size: " << pub_surfel_list.size() << endl;
 }
 
 void SurfelMapping::fromMultiSurfelsMsg(const vps_slam::MultiSurfels &msg, vector<shared_ptr<Surfel>> &sf_list)

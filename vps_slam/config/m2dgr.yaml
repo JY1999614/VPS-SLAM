@@ -17,7 +17,7 @@ imu:
                    0, 0, 1] # ulhk 4 utbm 3
 
 voxel:
-    max_layer: 3
+    max_layer: 2
     layer_point_size: 5
     max_voxel_size: 4
     flat_threshold: 0.01

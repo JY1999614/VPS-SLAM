@@ -887,7 +887,7 @@ class SurfelRootVoxel
 public:
     std::vector<shared_ptr<Surfel>> surfels_;
     std::unordered_map<VOXEL_LAYER_LOC, shared_ptr<SurfelChildVoxel>> voxels_;
-    std::unordered_set<VOXEL_LAYER_LOC> leaf_voxel_ids_;
+    std::unordered_set<VOXEL_LAYER_LOC> occupy_ids_;
     int max_layer_;
     vector<double> layer_voxel_size_;
     double voxel_vertex_[3];
@@ -903,7 +903,7 @@ public:
     {
         surfels_.clear();
         voxels_.clear();
-        leaf_voxel_ids_.clear();
+        occupy_ids_.clear();
     }
 
     void voxel_updating()
@@ -920,7 +920,12 @@ public:
                 }
                 VOXEL_LAYER_LOC position((int8_t)layer, (int8_t)loc_xyz[0], (int8_t)loc_xyz[1], (int8_t)loc_xyz[2]);
                 // record search path
-                if (voxels_.find(position) == voxels_.end())
+                if (occupy_ids_.find(position) == occupy_ids_.end())
+                {
+                    occupy_ids_.insert(position);
+                }
+                // record voxel node for surfels fusing
+                if (layer == max_layer_)
                 {
                     shared_ptr<SurfelChildVoxel> voxel_node(new SurfelChildVoxel(layer));
                     voxels_[position] = voxel_node;
@@ -930,8 +935,7 @@ public:
                     voxels_[position]->voxel_vertex_[1] = voxel_vertex_[1] + position.y * layer_voxel_size_[layer];
                     voxels_[position]->voxel_vertex_[2] = voxel_vertex_[2] + position.z * layer_voxel_size_[layer];
                 }
-                // record voxel node for surfels fusing
-                if (voxels_[position]->surfel_occupy_ == true || voxels_[position]->layer_ == max_layer_)
+                if (voxels_.find(position) != voxels_.end())
                 {
                     active_voxel_id.insert(position);
                     voxels_[position]->surfels_.push_back(sf);
@@ -971,7 +975,7 @@ public:
             // add id to queue
             voxels_id_que.push(*iter);
         }
-        
+
         // fuse surfels
         unordered_set<VOXEL_LAYER_LOC> parent_voxel_id_set;
         while (!voxels_id_que.empty())
@@ -995,7 +999,6 @@ public:
                 // merge
                 if (curr_voxel->layer_ < max_layer_)
                 {
-                    // merge layer by layer
                     for (int l = max_layer_; l > curr_voxel->layer_; l--)
                     {
                         unordered_map<VOXEL_LAYER_LOC, shared_ptr<SurfelChildVoxel>> merge_voxels;
@@ -1064,7 +1067,7 @@ public:
                 {
                     unordered_map<VOXEL_LAYER_LOC, shared_ptr<SurfelChildVoxel>> leaves;
                     // process current surfels
-                    for (auto sf :curr_voxel->surfels_)
+                    for (auto sf : curr_voxel->surfels_)
                     {
                         int xyz[3] = {0, 0, 0};
                         if (sf->center[0] >= curr_voxel->voxel_vertex_[0] + curr_voxel->half_length_)
@@ -1120,11 +1123,13 @@ public:
                         *(leaves[layer_pos]->surfel_map_) = *sf;
                         leaves[layer_pos]->surfel_occupy_ = true;
                     }
+                    voxels_.erase(curr_voxel_id);
                     // process the child voxels
                     for (auto iter = leaves.begin(); iter != leaves.end(); ++iter)
                     {
                         VOXEL_LAYER_LOC child_voxel_id = curr_voxel_id * 2 + iter->first;
                         voxels_[child_voxel_id] = iter->second;
+                        occupy_ids_.insert(child_voxel_id);
                         if (!voxels_[child_voxel_id]->surfels_.empty())
                         {
                             voxels_id_que.push(child_voxel_id);
@@ -1149,7 +1154,6 @@ public:
         while (!parent_voxel_id_que.empty())
         {
             VOXEL_LAYER_LOC curr_pos = parent_voxel_id_que.front();
-            shared_ptr<SurfelChildVoxel> curr_voxel = voxels_[curr_pos];
             parent_voxel_id_que.pop();
             parent_voxel_id_set.erase(curr_pos);
 
@@ -1162,7 +1166,7 @@ public:
                     for (int dz = 0; dz < 2; dz++)
                     {
                         VOXEL_LAYER_LOC child_id(curr_pos.l + 1, curr_pos.x * 2 + dx, curr_pos.y * 2 + dy, curr_pos.z * 2 + dz);
-                        if (voxels_.find(child_id) != voxels_.end())
+                        if (occupy_ids_.find(child_id) != occupy_ids_.end())
                         {
                             child_id_vec.push_back(child_id);
                         }
@@ -1171,10 +1175,11 @@ public:
             }
 
             // try to merge
+            shared_ptr<SurfelChildVoxel> curr_voxel(new SurfelChildVoxel(curr_pos.l));
             int count = 0;
             for (auto id : child_id_vec)
             {
-                if (voxels_[id]->surfel_occupy_ == false || voxels_[id]->surfel_map_->is_surfel == false)
+                if (voxels_.find(id) == voxels_.end() || voxels_[id]->surfel_map_->is_surfel == false)
                 {
                     count = -1;
                     break;
@@ -1198,14 +1203,21 @@ public:
                 // merge voxels
                 if (surfel_consist)
                 {
+                    voxels_[curr_pos] = curr_voxel;
+                    voxels_[curr_pos]->half_length_ = layer_voxel_size_[curr_pos.l] / 2.0;
+                    voxels_[curr_pos]->voxel_vertex_[0] = voxel_vertex_[0] + curr_pos.x * layer_voxel_size_[curr_pos.l];
+                    voxels_[curr_pos]->voxel_vertex_[1] = voxel_vertex_[1] + curr_pos.y * layer_voxel_size_[curr_pos.l];
+                    voxels_[curr_pos]->voxel_vertex_[2] = voxel_vertex_[2] + curr_pos.z * layer_voxel_size_[curr_pos.l];
                     // merge surfels then add
                     curr_voxel->merge_surfel();
                     *(curr_voxel->surfel_map_) = *(curr_voxel->surfel_cur_);
                     curr_voxel->surfel_occupy_ = true;
+                    curr_voxel->surfels_.clear();
                     // delete child voxels
                     for (auto id : child_id_vec)
                     {
                         voxels_.erase(id);
+                        occupy_ids_.erase(id);
                     }
                     // record parent id
                     if (curr_pos.l > 0)
@@ -1220,9 +1232,6 @@ public:
                     }
                 }
             }
-
-            // clear the vector
-            curr_voxel->surfels_.clear(); 
         }
     }
 };
@@ -1311,7 +1320,7 @@ void buildSingleResidual(const shared_ptr<Surfel> sf, const shared_ptr<Surfel> s
 {
     for (auto iter = root_voxel->voxels_.begin(); iter != root_voxel->voxels_.end(); ++iter)
     {
-        if (iter->second->surfel_occupy_ == false || iter->second->surfel_map_->is_surfel == false) continue;
+        if (iter->second->surfel_map_->is_surfel == false) continue;
         Surfel &surfel_map = *(iter->second->surfel_map_);
         // check angle
         double theta = acos(sf_world->normal.transpose() * surfel_map.normal);
@@ -1453,36 +1462,6 @@ void mapJet(double v, double vmin, double vmax, uint8_t &r, uint8_t &g, uint8_t 
     r = (uint8_t)(255 * dr);
     g = (uint8_t)(255 * dg);
     b = (uint8_t)(255 * db);
-
-    // db = 0.2;  // 固定少量蓝色，提升整体亮度
-    
-    // // 分阶段过渡逻辑（保持高饱和）
-    // if (v < 0.2) {
-    //     // 0.0~0.2：纯绿→黄绿（明亮起始）
-    //     dg = 1.0;
-    //     dr = v / 0.2 * 0.4;  // 红色缓慢加入，形成黄绿色
-    // } 
-    // else if (v < 0.4) {
-    //     // 0.2~0.4：黄绿→金黄
-    //     dg = 1.0;
-    //     dr = 0.4 + (v - 0.2) / 0.2 * 0.6;  // 红色快速增加到最大值
-    // } 
-    // else if (v < 0.6) {
-    //     // 0.4~0.6：金黄→橙红（中间过渡不灰暗）
-    //     dg = 1.0 - (v - 0.4) / 0.2 * 0.5;  // 绿色缓慢减少
-    //     dr = 1.0;                            // 红色保持最大值
-    // } 
-    // else if (v < 0.8) {
-    //     // 0.6~0.8：橙红→亮红
-    //     dg = 0.5 - (v - 0.6) / 0.2 * 0.5;  // 绿色继续减少至0
-    //     dr = 1.0;                            // 红色保持最大值
-    // } 
-    // else {
-    //     // 0.8~1.0：亮红→纯红（高饱和终点）
-    //     dg = 0.0;
-    //     dr = 1.0;                            // 红色保持最大值
-    //     db = 0.2 - (v - 0.8) / 0.2 * 0.1;  // 微调蓝色，让纯红更鲜艳
-    // }
 }
 
 void calcVectQuation(const Eigen::Vector3d &x_vec, const Eigen::Vector3d &y_vec,
@@ -1565,7 +1544,7 @@ void GetVoxelMapSurfel(const shared_ptr<SurfelRootVoxel> root_voxel, const int p
     {
         if (iter->first.l > pub_max_voxel_layer) continue;
 
-        if (iter->second->surfel_occupy_ && iter->second->surfel_map_->is_surfel)
+        if (iter->second->surfel_map_->is_surfel)
         {
             surfel_list.push_back(iter->second->surfel_map_);
         }
